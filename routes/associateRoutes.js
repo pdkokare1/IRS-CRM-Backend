@@ -89,21 +89,31 @@ router.post('/disposition', async (req, res) => {
   }
 });
 
-// 4. Twilio Voice Webhook (TwiML App Bridge)
+// 4. Twilio Voice Webhook (TwiML App Bridge) - WITH RECORDING ENABLED
 router.post('/voice', express.urlencoded({ extended: false }), (req, res) => {
   const twiml = new VoiceResponse();
   const to = req.body.To;
   
   // The callerId must be a verified Twilio number you own
   const callerId = process.env.TWILIO_CALLER_ID; 
+  
+  // Dynamically grab your Railway URL to tell Twilio where to send the audio file
+  const serverUrl = `https://${req.get('host')}`;
 
   if (!to) {
     twiml.say("Error: No destination phone number provided.");
   } else if (!callerId) {
     twiml.say("Error: Twilio Caller ID is missing in the server environment.");
   } else {
-    // This tells Twilio to bridge the browser audio to the real phone network
-    const dial = twiml.dial({ callerId });
+    // This bridges the browser audio AND starts recording the moment they answer
+    const dial = twiml.dial({ 
+      callerId: callerId,
+      record: 'record-from-answer',
+      // We pass the phone number in the URL so our catcher knows who the audio belongs to
+      recordingStatusCallback: `${serverUrl}/api/associate/recording-status?phone=${encodeURIComponent(to)}`,
+      recordingStatusCallbackMethod: 'POST',
+      recordingStatusCallbackEvent: 'completed'
+    });
     dial.number(to);
   }
 
@@ -111,7 +121,29 @@ router.post('/voice', express.urlencoded({ extended: false }), (req, res) => {
   res.send(twiml.toString());
 });
 
-// 5. Temporary Data Seeder (To test the UI) - CHANGED TO GET
+// 5. Webhook to Catch and Save Twilio Recordings
+router.post('/recording-status', express.urlencoded({ extended: false }), async (req, res) => {
+  try {
+    const phone = req.query.phone;
+    const recordingUrl = req.body.RecordingUrl;
+    
+    // If we have a phone number and a recording URL, link it in MongoDB
+    if (phone && recordingUrl) {
+      await Respondent.findOneAndUpdate(
+        { phone: phone },
+        { $push: { recordings: { url: recordingUrl, date: new Date() } } }
+      );
+    }
+    
+    // Always return 200 so Twilio knows we received it successfully
+    res.sendStatus(200);
+  } catch (error) {
+    console.error('Error saving recording webhook:', error);
+    res.sendStatus(500);
+  }
+});
+
+// 6. Temporary Data Seeder (To test the UI)
 router.get('/seed', async (req, res) => {
   try {
     const dummyData = [
