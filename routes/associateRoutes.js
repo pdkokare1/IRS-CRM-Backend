@@ -89,10 +89,6 @@ router.post('/disposition', async (req, res) => {
   }
 });
 
-// ==========================================
-// NEW: TWILIO VOICE WEBHOOK & DATA SEEDING
-// ==========================================
-
 // 4. Twilio Voice Webhook (TwiML App Bridge)
 router.post('/voice', express.urlencoded({ extended: false }), (req, res) => {
   const twiml = new VoiceResponse();
@@ -115,13 +111,13 @@ router.post('/voice', express.urlencoded({ extended: false }), (req, res) => {
   res.send(twiml.toString());
 });
 
-// 5. Temporary Data Seeder (To test the UI)
-router.post('/seed', async (req, res) => {
+// 5. Temporary Data Seeder (To test the UI) - CHANGED TO GET
+router.get('/seed', async (req, res) => {
   try {
     const dummyData = [
       {
         name: "Arjun Sharma",
-        phone: "+919876543210", // You should change one of these to your actual phone number to test calls!
+        phone: "+919876543210", 
         email: "arjun@example.com",
         demographics: { age: 34, gender: "Male", location: "Pune, India", industry: "Technology" }
       },
