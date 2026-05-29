@@ -3,6 +3,7 @@ const router = express.Router();
 const twilio = require('twilio');
 const Respondent = require('../models/Respondent');
 const Disposition = require('../models/Disposition');
+const VoiceResponse = require('twilio').twiml.VoiceResponse;
 
 // 1. Get Next Respondent (Atomic Lock)
 router.get('/next-respondent', async (req, res) => {
@@ -83,6 +84,63 @@ router.post('/disposition', async (req, res) => {
     });
 
     res.status(200).json({ message: 'Disposition saved successfully.' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
+// NEW: TWILIO VOICE WEBHOOK & DATA SEEDING
+// ==========================================
+
+// 4. Twilio Voice Webhook (TwiML App Bridge)
+router.post('/voice', express.urlencoded({ extended: false }), (req, res) => {
+  const twiml = new VoiceResponse();
+  const to = req.body.To;
+  
+  // The callerId must be a verified Twilio number you own
+  const callerId = process.env.TWILIO_CALLER_ID; 
+
+  if (!to) {
+    twiml.say("Error: No destination phone number provided.");
+  } else if (!callerId) {
+    twiml.say("Error: Twilio Caller ID is missing in the server environment.");
+  } else {
+    // This tells Twilio to bridge the browser audio to the real phone network
+    const dial = twiml.dial({ callerId });
+    dial.number(to);
+  }
+
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+// 5. Temporary Data Seeder (To test the UI)
+router.post('/seed', async (req, res) => {
+  try {
+    const dummyData = [
+      {
+        name: "Arjun Sharma",
+        phone: "+919876543210", // You should change one of these to your actual phone number to test calls!
+        email: "arjun@example.com",
+        demographics: { age: 34, gender: "Male", location: "Pune, India", industry: "Technology" }
+      },
+      {
+        name: "Priya Patel",
+        phone: "+918765432109",
+        email: "priya@example.com",
+        demographics: { age: 28, gender: "Female", location: "Mumbai, India", industry: "Finance" }
+      },
+      {
+        name: "David Chen",
+        phone: "+14155552671",
+        email: "david@example.com",
+        demographics: { age: 45, gender: "Male", location: "San Francisco, USA", industry: "Healthcare" }
+      }
+    ];
+
+    await Respondent.insertMany(dummyData);
+    res.status(201).json({ message: "Successfully injected 3 test respondents into the queue." });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
