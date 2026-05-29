@@ -123,7 +123,7 @@ router.get('/seed', async (req, res) => {
       },
       {
         name: "Priya Patel",
-        phone: "+918765432109",
+        phone: "+917666886851",
         email: "priya@example.com",
         demographics: { age: 28, gender: "Female", location: "Mumbai, India", industry: "Finance" }
       },
