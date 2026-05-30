@@ -75,6 +75,11 @@ router.post('/disposition', async (req, res) => {
     const { respondentId, outcome, notes, callDurationSeconds } = req.body;
     const associateId = req.user.uid;
 
+    // NEW: Strict validation to prevent empty payloads
+    if (!respondentId || !outcome) {
+      return res.status(400).json({ error: 'Respondent ID and Outcome are required.' });
+    }
+
     const disposition = new Disposition({
       respondentId,
       associateId,
@@ -135,7 +140,7 @@ router.post('/recording-status', express.urlencoded({ extended: false }), async 
       // Step A: Upload the Twilio audio directly to Cloudinary
       const cloudinaryResponse = await cloudinary.uploader.upload(`${recordingUrl}.mp3`, {
         resource_type: 'video', 
-        folder: 'irs_crm_recordings' // Updated for the current project
+        folder: 'irs_crm_recordings' 
       });
 
       // Step B: Save the permanent Cloudinary link to MongoDB
@@ -185,7 +190,44 @@ router.get('/seed', async (req, res) => {
     ];
 
     await Respondent.insertMany(dummyData);
-    res.status(201).json({ message: "Successfully injected 3 test respondents into the queue." });
+    res.status(201).json({ message: "Successfully injected test respondents." });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 7. NEW: Live Metrics for Dashboard
+router.get('/metrics', async (req, res) => {
+  try {
+    const associateId = req.user.uid;
+    
+    // Create boundary for today's logs
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const totalDispositionsToday = await Disposition.countDocuments({
+      associateId,
+      createdAt: { $gte: startOfDay }
+    });
+
+    const catiCount = await Disposition.countDocuments({
+      associateId,
+      outcome: 'completed-cati',
+      createdAt: { $gte: startOfDay }
+    });
+
+    const cawiCount = await Disposition.countDocuments({
+      associateId,
+      outcome: 'completed-cawi',
+      createdAt: { $gte: startOfDay }
+    });
+
+    res.json({
+      callsMade: totalDispositionsToday, 
+      connectedCalls: catiCount + cawiCount,
+      cati: catiCount,
+      cawi: cawiCount
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
