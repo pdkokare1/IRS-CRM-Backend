@@ -5,11 +5,13 @@ const dispositionSchema = new mongoose.Schema({
   associateId: { type: String, required: true }, // Firebase UID
   outcome: { 
     type: String, 
-    enum: ['completed', 'refusal', 'callback', 'terminated', 'no-answer'], 
+    enum: ['completed-cati', 'completed-cawi', 'callback-requested', 'left-voicemail', 'no-answer', 'wrong-number', 'refused', 'completed', 'refusal', 'callback', 'terminated'], 
     required: true 
   },
   notes: { type: String },
   callDurationSeconds: { type: Number, default: 0 },
+  // NEW: Track the specific callback time requested historically
+  callbackTime: { type: Date, default: null },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Disposition', dispositionSchema);
