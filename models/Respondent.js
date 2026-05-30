@@ -1,22 +1,38 @@
 const mongoose = require('mongoose');
 
 const respondentSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  phone: { type: String, required: true },
-  email: String,
+  name: {
+    type: String,
+    required: true,
+  },
+  phone: {
+    type: String,
+    required: true,
+    unique: true,
+  },
+  email: {
+    type: String,
+    default: null,
+  },
   demographics: {
-    age: Number,
-    gender: String,
-    location: String,
-    industry: String,
+    type: Map,
+    of: String,
+    default: {},
   },
-  status: { 
-    type: String, 
-    enum: ['uncontacted', 'callback', 'completed', 'refusal', 'terminated'],
-    default: 'uncontacted' 
+  // NEW: Links the respondent to a specific agent's list view
+  assignedTo: {
+    type: String,
+    default: null,
   },
-  lockedBy: { type: String, default: null }, // Firebase UID of the Associate
-  lockTime: { type: Date, default: null }
-}, { timestamps: true });
+  // NEW: Provides instant UI feedback in the dashboard table
+  lastCallStatus: {
+    type: String,
+    default: 'Uncalled',
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+  }
+});
 
-module.exports = mongoose.model('Respondent', respondentSchema);
+module.exports = mongoose.models.Respondent || mongoose.model('Respondent', respondentSchema);
