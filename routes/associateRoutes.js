@@ -62,6 +62,23 @@ router.get('/next-respondent', async (req, res) => {
   }
 });
 
+// NEW: Update Respondent Profile Route
+router.put('/respondent/:id', async (req, res) => {
+  try {
+    const { company, jobTitle, jobRole, country, source, directNumber, boardLineNumber, additionalBoardLines } = req.body;
+    const updated = await Respondent.findByIdAndUpdate(req.params.id, {
+      $set: {
+        company, jobTitle, jobRole, country, source, directNumber, boardLineNumber, additionalBoardLines
+      }
+    }, { new: true });
+    
+    if (!updated) return res.status(404).json({ error: 'Respondent not found' });
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // 2. Generate Twilio Access Token for the Client Dialer
 router.get('/twilio-token', (req, res) => {
   try {
@@ -377,10 +394,10 @@ router.post('/send-intro-email', async (req, res) => {
     // Creating a relative URL that your Frontend will hit (or your backend redirects)
     const trackingLink = `https://${req.get('host')}/api/associate/track-survey/${uniqueToken}`;
 
-    // Compile Smart Email
+    // MODIFIED: Parse for first name inside the HTML template
     const htmlContent = `
       <div style="font-family: sans-serif; color: #333; line-height: 1.6; max-width: 600px; margin: 0 auto;">
-        <p>Dear ${respondent.name},</p>
+        <p>Dear ${respondent.name.split(' ')[0]},</p>
         <p>Following up on our recent communication, I am sharing the link to the <strong>${surveyName}</strong>.</p>
         <p>Your insights are incredibly valuable to our research. Please use your unique, secure link below to access the survey:</p>
         <p style="margin: 25px 0;">
