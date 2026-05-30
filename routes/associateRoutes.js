@@ -13,20 +13,42 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// 1. Get Next Respondent (Atomic Lock)
+// 1. Get Next Respondent (Atomic Lock with Quota & Callbacks)
 router.get('/next-respondent', async (req, res) => {
   try {
     const associateId = req.user.uid; 
-    
-    // Find and lock an uncontacted respondent atomically
-    const respondent = await Respondent.findOneAndUpdate(
-      { status: 'uncontacted', lockedBy: null },
+
+    // NEW FEATURE: Hard Quota Enforcement Check
+    // Example: Global cap of 5000 completed surveys before system auto-halts
+    const completedCount = await Disposition.countDocuments({ outcome: { $regex: /^completed/ } });
+    if (completedCount >= 5000) {
+      return res.status(403).json({ message: 'Campaign Quota reached. No more leads can be pulled.' });
+    }
+
+    // NEW FEATURE: Smart Callback Routing
+    // Check for due callbacks assigned to this associate first
+    let respondent = await Respondent.findOneAndUpdate(
+      { 
+        status: 'callback-requested', 
+        lockedBy: null, 
+        callbackAssignedTo: associateId,
+        callbackTime: { $lte: new Date() } // Time has arrived or passed
+      },
       { $set: { lockedBy: associateId, lockTime: new Date() } },
-      { new: true, sort: { createdAt: 1 } } // Oldest first
+      { new: true, sort: { callbackTime: 1 } } // Oldest due first
     );
 
+    // If no callbacks are due, fetch a standard uncontacted lead
     if (!respondent) {
-      return res.status(404).json({ message: 'No available uncontacted respondents in the pool.' });
+      respondent = await Respondent.findOneAndUpdate(
+        { status: 'uncontacted', lockedBy: null },
+        { $set: { lockedBy: associateId, lockTime: new Date() } },
+        { new: true, sort: { createdAt: 1 } } // Oldest first
+      );
+    }
+
+    if (!respondent) {
+      return res.status(404).json({ message: 'No available respondents or pending callbacks in the pool.' });
     }
 
     res.json(respondent);
@@ -72,10 +94,9 @@ router.get('/twilio-token', (req, res) => {
 // 3. Save Disposition and Unlock/Update Respondent
 router.post('/disposition', async (req, res) => {
   try {
-    const { respondentId, outcome, notes, callDurationSeconds } = req.body;
+    const { respondentId, outcome, notes, callDurationSeconds, callbackTime } = req.body;
     const associateId = req.user.uid;
 
-    // NEW: Strict validation to prevent empty payloads
     if (!respondentId || !outcome) {
       return res.status(400).json({ error: 'Respondent ID and Outcome are required.' });
     }
@@ -85,15 +106,19 @@ router.post('/disposition', async (req, res) => {
       associateId,
       outcome,
       notes,
-      callDurationSeconds
+      callDurationSeconds,
+      callbackTime: outcome === 'callback-requested' ? callbackTime : null // NEW
     });
     await disposition.save();
 
-    // Update respondent status and remove lock
+    // Update respondent status, routing flags, and remove lock
     await Respondent.findByIdAndUpdate(respondentId, {
       status: outcome === 'no-answer' ? 'uncontacted' : outcome,
+      lastCallStatus: outcome,
       lockedBy: null,
-      lockTime: null
+      lockTime: null,
+      callbackTime: outcome === 'callback-requested' ? callbackTime : null, // NEW
+      callbackAssignedTo: outcome === 'callback-requested' ? associateId : null // NEW
     });
 
     res.status(200).json({ message: 'Disposition saved successfully.' });
@@ -137,19 +162,16 @@ router.post('/recording-status', express.urlencoded({ extended: false }), async 
     
     if (phone && recordingUrl && recordingSid) {
       
-      // Step A: Upload the Twilio audio directly to Cloudinary
       const cloudinaryResponse = await cloudinary.uploader.upload(`${recordingUrl}.mp3`, {
         resource_type: 'video', 
         folder: 'irs_crm_recordings' 
       });
 
-      // Step B: Save the permanent Cloudinary link to MongoDB
       await Respondent.findOneAndUpdate(
         { phone: phone },
         { $push: { recordings: { url: cloudinaryResponse.secure_url, date: new Date() } } }
       );
 
-      // Step C: Delete the file from Twilio to prevent storage fees
       const twilioClient = twilio(
         process.env.TWILIO_API_KEY, 
         process.env.TWILIO_API_SECRET, 
@@ -165,7 +187,7 @@ router.post('/recording-status', express.urlencoded({ extended: false }), async 
   }
 });
 
-// 6. Temporary Data Seeder (To test the UI)
+// 6. Temporary Data Seeder
 router.get('/seed', async (req, res) => {
   try {
     const dummyData = [
@@ -196,12 +218,11 @@ router.get('/seed', async (req, res) => {
   }
 });
 
-// 7. NEW: Live Metrics for Dashboard
+// 7. Live Metrics for Dashboard
 router.get('/metrics', async (req, res) => {
   try {
     const associateId = req.user.uid;
     
-    // Create boundary for today's logs
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
 
@@ -228,6 +249,48 @@ router.get('/metrics', async (req, res) => {
       cati: catiCount,
       cawi: cawiCount
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// NEW FEATURE 8: Data Ingestion (CSV Upload to DB)
+router.post('/ingest', async (req, res) => {
+  try {
+    const records = req.body; // Expects an array of objects mapped from CSV
+    if (!Array.isArray(records) || records.length === 0) {
+      return res.status(400).json({ error: 'Valid JSON array of records required.' });
+    }
+
+    // Insert ignoring duplicates (phone is unique in schema)
+    const result = await Respondent.insertMany(records, { ordered: false }).catch(err => {
+      // If error is code 11000 (duplicate key), we return the successful insertions
+      return err.insertedDocs; 
+    });
+
+    res.status(201).json({ message: `Successfully ingested ${result ? result.length : 0} new respondents.` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// NEW FEATURE 9: Client Data Export
+router.get('/export', async (req, res) => {
+  try {
+    const respondents = await Respondent.find().lean();
+    
+    // Construct CSV Header
+    let csvStr = 'ID,Name,Phone,Email,Status,LastCallStatus,RecordingCount\n';
+    
+    // Populate CSV Rows
+    respondents.forEach(r => {
+      const recCount = r.recordings ? r.recordings.length : 0;
+      csvStr += `"${r._id}","${r.name}","${r.phone}","${r.email || ''}","${r.status || 'uncontacted'}","${r.lastCallStatus || ''}",${recCount}\n`;
+    });
+
+    res.header('Content-Type', 'text/csv');
+    res.attachment('irs_crm_export.csv');
+    res.send(csvStr);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
