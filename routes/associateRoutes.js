@@ -4,9 +4,14 @@ const express = require('express');
 const router = express.Router();
 const twilio = require('twilio');
 const cloudinary = require('cloudinary').v2;
+const crypto = require('crypto');
+const { Resend } = require('resend');
 const Respondent = require('../models/Respondent');
 const Disposition = require('../models/Disposition');
 const VoiceResponse = require('twilio').twiml.VoiceResponse;
+
+// Optional fallback string so your server doesn't crash before you add your Railway Variable
+const resend = new Resend(process.env.RESEND_API_KEY || 're_mock_key');
 
 // Configure Cloudinary (Requires Railway Variables)
 cloudinary.config({
@@ -292,8 +297,7 @@ router.get('/export', async (req, res) => {
   }
 });
 
-
-// NEW FEATURE: Get Active Associates for Warm Transfer
+// Get Active Associates for Warm Transfer
 router.get('/active-associates', async (req, res) => {
   try {
     // Mock active users for the interface
@@ -308,7 +312,7 @@ router.get('/active-associates', async (req, res) => {
   }
 });
 
-// NEW FEATURE: 1-Click Voicemail Drop Hijack (REST API approach)
+// 1-Click Voicemail Drop Hijack (REST API approach)
 router.post('/voicemail-drop', express.json(), async (req, res) => {
   try {
     const { callSid } = req.body;
@@ -330,10 +334,9 @@ router.post('/voicemail-drop', express.json(), async (req, res) => {
   }
 });
 
-// NEW FEATURE: The TwiML for the Voicemail Drop
+// The TwiML for the Voicemail Drop
 router.post('/voicemail-twiml', express.urlencoded({ extended: false }), (req, res) => {
   const twiml = new VoiceResponse();
-  // Ensure VOICEMAIL_AUDIO_URL is added to your Railway variables!
   const audioUrl = process.env.VOICEMAIL_AUDIO_URL || 'https://demo.twilio.com/docs/classic.mp3';
   
   twiml.play(audioUrl);
@@ -343,7 +346,7 @@ router.post('/voicemail-twiml', express.urlencoded({ extended: false }), (req, r
   res.send(twiml.toString());
 });
 
-// NEW FEATURE: Historical Timeline Fetcher
+// Historical Timeline Fetcher
 router.get('/respondent/:id/history', async (req, res) => {
   try {
     const history = await Disposition.find({ respondentId: req.params.id })
@@ -352,6 +355,97 @@ router.get('/respondent/:id/history', async (req, res) => {
     res.json(history);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// NEW FEATURE: Send Introductory Email via Resend
+router.post('/send-intro-email', async (req, res) => {
+  try {
+    const { respondentId, surveyName, agentName, agentId } = req.body;
+    
+    if (!respondentId || !surveyName) {
+      return res.status(400).json({ error: 'Respondent ID and Survey Name are required.' });
+    }
+
+    const respondent = await Respondent.findById(respondentId);
+    if (!respondent) return res.status(404).json({ error: 'Respondent not found.' });
+    if (!respondent.email) return res.status(400).json({ error: 'Respondent has no valid email address.' });
+
+    // Generate unique crypto token for tracking
+    const uniqueToken = crypto.randomBytes(16).toString('hex');
+    
+    // Creating a relative URL that your Frontend will hit (or your backend redirects)
+    const trackingLink = `https://${req.get('host')}/api/associate/track-survey/${uniqueToken}`;
+
+    // Compile Smart Email
+    const htmlContent = `
+      <div style="font-family: sans-serif; color: #333; line-height: 1.6; max-width: 600px; margin: 0 auto;">
+        <p>Dear ${respondent.name},</p>
+        <p>Following up on our recent communication, I am sharing the link to the <strong>${surveyName}</strong>.</p>
+        <p>Your insights are incredibly valuable to our research. Please use your unique, secure link below to access the survey:</p>
+        <p style="margin: 25px 0;">
+          <a href="${trackingLink}" style="background-color: #4f46e5; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Begin Survey</a>
+        </p>
+        <p>If you have any questions, feel free to reply directly to this email.</p>
+        <p>Best regards,<br/><br/><strong>${agentName || 'Research Team'}</strong><br/>IRS-CRM Associate</p>
+      </div>
+    `;
+
+    // Attempt to send email via Resend
+    // Important: process.env.RESEND_FROM_EMAIL must be an email verified on your Resend dashboard
+    const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+    
+    const { data, error } = await resend.emails.send({
+      from: `IRS-CRM <${fromEmail}>`,
+      to: [respondent.email],
+      subject: `Research Invitation: ${surveyName}`,
+      html: htmlContent,
+    });
+
+    if (error) {
+      console.error('Resend Error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    // Save tracking info to database
+    respondent.assignedSurveys.push({
+      surveyName,
+      associateId: agentId || 'unknown-agent',
+      uniqueToken,
+      status: 'Sent'
+    });
+    await respondent.save();
+
+    res.status(200).json({ message: 'Email sent successfully!', trackingLink });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// NEW FEATURE: Survey Tracking Redirect
+router.get('/track-survey/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    // Find the respondent holding this specific token
+    const respondent = await Respondent.findOne({ 'assignedSurveys.uniqueToken': token });
+    
+    if (!respondent) {
+      return res.status(404).send('Invalid or expired survey link.');
+    }
+
+    // Update status to 'Opened' if it was merely 'Sent'
+    const surveyIndex = respondent.assignedSurveys.findIndex(s => s.uniqueToken === token);
+    if (surveyIndex !== -1 && respondent.assignedSurveys[surveyIndex].status === 'Sent') {
+      respondent.assignedSurveys[surveyIndex].status = 'Opened';
+      await respondent.save();
+    }
+
+    // Redirect to the actual survey frontend (Using a generic destination fallback for now)
+    const destinationUrl = process.env.SURVEY_PLATFORM_URL || 'https://google.com';
+    res.redirect(`${destinationUrl}?ref=${token}`);
+  } catch (error) {
+    res.status(500).send('Tracking error occurred.');
   }
 });
 
