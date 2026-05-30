@@ -1,3 +1,5 @@
+// File: models/Respondent.js
+
 const mongoose = require('mongoose');
 
 const respondentSchema = new mongoose.Schema({
@@ -17,6 +19,10 @@ const respondentSchema = new mongoose.Schema({
   email: { type: String, default: null },
   directNumber: { type: String, default: null },
   boardLineNumber: { type: String, default: null },
+  
+  // NEW: Schema accepts multiple extra board lines 
+  additionalBoardLines: [{ type: String }],
+  
   source: { type: String, default: null },
   country: { type: String, default: null },
   
