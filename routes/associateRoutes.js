@@ -25,13 +25,13 @@ router.get('/next-respondent', async (req, res) => {
   try {
     const associateId = req.user.uid; 
 
-    // NEW FEATURE: Hard Quota Enforcement Check
+    // Hard Quota Enforcement Check
     const completedCount = await Disposition.countDocuments({ outcome: { $regex: /^completed/ } });
     if (completedCount >= 5000) {
       return res.status(403).json({ message: 'Campaign Quota reached. No more leads can be pulled.' });
     }
 
-    // NEW FEATURE: Smart Callback Routing
+    // Smart Callback Routing
     let respondent = await Respondent.findOneAndUpdate(
       { 
         status: 'callback-requested', 
@@ -62,7 +62,7 @@ router.get('/next-respondent', async (req, res) => {
   }
 });
 
-// NEW: Update Respondent Profile Route
+// Update Respondent Profile Route
 router.put('/respondent/:id', async (req, res) => {
   try {
     const { company, jobTitle, jobRole, country, source, directNumber, boardLineNumber, additionalBoardLines } = req.body;
@@ -276,19 +276,60 @@ router.get('/metrics', async (req, res) => {
   }
 });
 
-// 8. Data Ingestion (CSV Upload to DB)
+// 8. Data Ingestion (CSV Upload to DB) with FEATURE: Automated Data Enrichment
 router.post('/ingest', async (req, res) => {
   try {
-    const records = req.body; // Expects an array of objects mapped from CSV
+    const records = req.body; 
     if (!Array.isArray(records) || records.length === 0) {
       return res.status(400).json({ error: 'Valid JSON array of records required.' });
     }
 
-    const result = await Respondent.insertMany(records, { ordered: false }).catch(err => {
-      return err.insertedDocs; 
+    // Helper: Clean and format phone numbers for Twilio
+    const sanitizePhone = (phone) => {
+      if (!phone) return null;
+      let cleaned = phone.toString().replace(/[\s\-\(\)]/g, ''); // Strip visual formatting
+      
+      // Smart formatting: If it's 10 digits exactly, assume Indian format and append +91
+      if (/^\d{10}$/.test(cleaned)) {
+        cleaned = '+91' + cleaned;
+      } else if (!cleaned.startsWith('+') && /^\d+$/.test(cleaned)) {
+        // If it lacks a plus but is all numbers, prepend the plus
+        cleaned = '+' + cleaned;
+      }
+      return cleaned;
+    };
+
+    // Helper: Proper capitalization for messy string inputs
+    const toTitleCase = (str) => {
+      if (!str) return str;
+      return str.replace(
+        /\w\S*/g,
+        (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase()
+      );
+    };
+
+    // Enrichment Mapping
+    const enrichedRecords = records.map(record => {
+      const enriched = { ...record };
+      
+      if (enriched.name) enriched.name = toTitleCase(enriched.name.trim());
+      if (enriched.company) enriched.company = toTitleCase(enriched.company.trim());
+      if (enriched.jobTitle) enriched.jobTitle = toTitleCase(enriched.jobTitle.trim());
+      if (enriched.email) enriched.email = enriched.email.trim().toLowerCase();
+      
+      if (enriched.phone) enriched.phone = sanitizePhone(enriched.phone);
+      if (enriched.directNumber) enriched.directNumber = sanitizePhone(enriched.directNumber);
+      if (enriched.boardLineNumber) enriched.boardLineNumber = sanitizePhone(enriched.boardLineNumber);
+      
+      return enriched;
     });
 
-    res.status(201).json({ message: `Successfully ingested ${result ? result.length : 0} new respondents.` });
+    // Modified to use the enriched array instead of the raw array
+    const result = await Respondent.insertMany(enrichedRecords, { ordered: false }).catch(err => {
+      return err.insertedDocs; // Ignore duplicates, return successful inserts
+    });
+
+    res.status(201).json({ message: `Successfully enriched and ingested ${result ? result.length : 0} new respondents.` });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -317,7 +358,6 @@ router.get('/export', async (req, res) => {
 // Get Active Associates for Warm Transfer
 router.get('/active-associates', async (req, res) => {
   try {
-    // Mock active users for the interface
     const mockActiveAssociates = [
       { id: 'manager-001', name: 'Sarah Connor', role: 'Escalations Manager', status: 'Available' },
       { id: 'agent-002', name: 'John Smith', role: 'Senior Associate', status: 'In a Call' },
@@ -329,7 +369,7 @@ router.get('/active-associates', async (req, res) => {
   }
 });
 
-// 1-Click Voicemail Drop Hijack (REST API approach)
+// 1-Click Voicemail Drop Hijack
 router.post('/voicemail-drop', express.json(), async (req, res) => {
   try {
     const { callSid } = req.body;
@@ -338,7 +378,6 @@ router.post('/voicemail-drop', express.json(), async (req, res) => {
     const twilioClient = twilio(process.env.TWILIO_API_KEY, process.env.TWILIO_API_SECRET, { accountSid: process.env.TWILIO_ACCOUNT_SID });
     const serverUrl = `https://${req.get('host')}`;
     
-    // Updates the live call to abandon the associate and read the voicemail TwiML
     await twilioClient.calls(callSid).update({
       method: 'POST',
       url: `${serverUrl}/api/associate/voicemail-twiml`
@@ -357,7 +396,7 @@ router.post('/voicemail-twiml', express.urlencoded({ extended: false }), (req, r
   const audioUrl = process.env.VOICEMAIL_AUDIO_URL || 'https://demo.twilio.com/docs/classic.mp3';
   
   twiml.play(audioUrl);
-  twiml.hangup(); // Hang up after the message finishes playing
+  twiml.hangup(); 
   
   res.type('text/xml');
   res.send(twiml.toString());
@@ -375,7 +414,7 @@ router.get('/respondent/:id/history', async (req, res) => {
   }
 });
 
-// NEW FEATURE: Send Introductory Email via Resend
+// Send Introductory Email via Resend
 router.post('/send-intro-email', async (req, res) => {
   try {
     const { respondentId, surveyName, agentName, agentId } = req.body;
@@ -388,13 +427,9 @@ router.post('/send-intro-email', async (req, res) => {
     if (!respondent) return res.status(404).json({ error: 'Respondent not found.' });
     if (!respondent.email) return res.status(400).json({ error: 'Respondent has no valid email address.' });
 
-    // Generate unique crypto token for tracking
     const uniqueToken = crypto.randomBytes(16).toString('hex');
-    
-    // Creating a relative URL that your Frontend will hit (or your backend redirects)
     const trackingLink = `https://${req.get('host')}/api/associate/track-survey/${uniqueToken}`;
 
-    // MODIFIED: Parse for first name inside the HTML template
     const htmlContent = `
       <div style="font-family: sans-serif; color: #333; line-height: 1.6; max-width: 600px; margin: 0 auto;">
         <p>Dear ${respondent.name.split(' ')[0]},</p>
@@ -408,8 +443,6 @@ router.post('/send-intro-email', async (req, res) => {
       </div>
     `;
 
-    // Attempt to send email via Resend
-    // Important: process.env.RESEND_FROM_EMAIL must be an email verified on your Resend dashboard
     const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
     
     const { data, error } = await resend.emails.send({
@@ -424,7 +457,6 @@ router.post('/send-intro-email', async (req, res) => {
       return res.status(500).json({ error: error.message });
     }
 
-    // Save tracking info to database
     respondent.assignedSurveys.push({
       surveyName,
       associateId: agentId || 'unknown-agent',
@@ -439,26 +471,23 @@ router.post('/send-intro-email', async (req, res) => {
   }
 });
 
-// NEW FEATURE: Survey Tracking Redirect
+// Survey Tracking Redirect
 router.get('/track-survey/:token', async (req, res) => {
   try {
     const { token } = req.params;
 
-    // Find the respondent holding this specific token
     const respondent = await Respondent.findOne({ 'assignedSurveys.uniqueToken': token });
     
     if (!respondent) {
       return res.status(404).send('Invalid or expired survey link.');
     }
 
-    // Update status to 'Opened' if it was merely 'Sent'
     const surveyIndex = respondent.assignedSurveys.findIndex(s => s.uniqueToken === token);
     if (surveyIndex !== -1 && respondent.assignedSurveys[surveyIndex].status === 'Sent') {
       respondent.assignedSurveys[surveyIndex].status = 'Opened';
       await respondent.save();
     }
 
-    // Redirect to the actual survey frontend (Using a generic destination fallback for now)
     const destinationUrl = process.env.SURVEY_PLATFORM_URL || 'https://google.com';
     res.redirect(`${destinationUrl}?ref=${token}`);
   } catch (error) {
