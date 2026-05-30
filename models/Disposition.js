@@ -1,3 +1,5 @@
+// File: models/Disposition.js
+
 const mongoose = require('mongoose');
 
 const dispositionSchema = new mongoose.Schema({
@@ -12,6 +14,8 @@ const dispositionSchema = new mongoose.Schema({
   callDurationSeconds: { type: Number, default: 0 },
   // NEW: Track the specific callback time requested historically
   callbackTime: { type: Date, default: null },
+  // NEW FEATURE: Audio Playback link for this specific disposition's timeline
+  recordingUrl: { type: String, default: null }
 }, { timestamps: true });
 
-module.exports = mongoose.model('Disposition', dispositionSchema);
+module.exports = mongoose.models.Disposition || mongoose.model('Disposition', dispositionSchema);
