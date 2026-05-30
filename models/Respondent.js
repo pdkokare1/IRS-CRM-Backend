@@ -10,7 +10,7 @@ const respondentSchema = new mongoose.Schema({
     required: true,
     unique: true,
   },
-  // NEW: Expanded Respondent Data Fields
+  // Expanded Respondent Data Fields
   company: { type: String, default: null },
   jobTitle: { type: String, default: null },
   jobRole: { type: String, default: null },
@@ -48,7 +48,15 @@ const respondentSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now,
-  }
+  },
+  // NEW FEATURE: Smart Email & Survey Tracking System
+  assignedSurveys: [{
+    surveyName: { type: String },
+    associateId: { type: String },
+    uniqueToken: { type: String },
+    status: { type: String, default: 'Sent' }, // Status can be Sent, Opened, or Completed
+    sentAt: { type: Date, default: Date.now }
+  }]
 });
 
 module.exports = mongoose.models.Respondent || mongoose.model('Respondent', respondentSchema);
