@@ -1,9 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const twilio = require('twilio');
+const cloudinary = require('cloudinary').v2;
 const Respondent = require('../models/Respondent');
 const Disposition = require('../models/Disposition');
 const VoiceResponse = require('twilio').twiml.VoiceResponse;
+
+// Configure Cloudinary (Requires Railway Variables)
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 // 1. Get Next Respondent (Atomic Lock)
 router.get('/next-respondent', async (req, res) => {
@@ -89,15 +97,11 @@ router.post('/disposition', async (req, res) => {
   }
 });
 
-// 4. Twilio Voice Webhook (TwiML App Bridge) - WITH RECORDING ENABLED
+// 4. Twilio Voice Webhook (TwiML App Bridge)
 router.post('/voice', express.urlencoded({ extended: false }), (req, res) => {
   const twiml = new VoiceResponse();
   const to = req.body.To;
-  
-  // The callerId must be a verified Twilio number you own
   const callerId = process.env.TWILIO_CALLER_ID; 
-  
-  // Dynamically grab your Railway URL to tell Twilio where to send the audio file
   const serverUrl = `https://${req.get('host')}`;
 
   if (!to) {
@@ -105,11 +109,9 @@ router.post('/voice', express.urlencoded({ extended: false }), (req, res) => {
   } else if (!callerId) {
     twiml.say("Error: Twilio Caller ID is missing in the server environment.");
   } else {
-    // This bridges the browser audio AND starts recording the moment they answer
     const dial = twiml.dial({ 
       callerId: callerId,
       record: 'record-from-answer',
-      // We pass the phone number in the URL so our catcher knows who the audio belongs to
       recordingStatusCallback: `${serverUrl}/api/associate/recording-status?phone=${encodeURIComponent(to)}`,
       recordingStatusCallbackMethod: 'POST',
       recordingStatusCallbackEvent: 'completed'
@@ -121,24 +123,39 @@ router.post('/voice', express.urlencoded({ extended: false }), (req, res) => {
   res.send(twiml.toString());
 });
 
-// 5. Webhook to Catch and Save Twilio Recordings
+// 5. Cloudinary Migration Webhook
 router.post('/recording-status', express.urlencoded({ extended: false }), async (req, res) => {
   try {
     const phone = req.query.phone;
     const recordingUrl = req.body.RecordingUrl;
+    const recordingSid = req.body.RecordingSid; 
     
-    // If we have a phone number and a recording URL, link it in MongoDB
-    if (phone && recordingUrl) {
+    if (phone && recordingUrl && recordingSid) {
+      
+      // Step A: Upload the Twilio audio directly to Cloudinary
+      const cloudinaryResponse = await cloudinary.uploader.upload(`${recordingUrl}.mp3`, {
+        resource_type: 'video', 
+        folder: 'irs_crm_recordings' // Updated for the current project
+      });
+
+      // Step B: Save the permanent Cloudinary link to MongoDB
       await Respondent.findOneAndUpdate(
         { phone: phone },
-        { $push: { recordings: { url: recordingUrl, date: new Date() } } }
+        { $push: { recordings: { url: cloudinaryResponse.secure_url, date: new Date() } } }
       );
+
+      // Step C: Delete the file from Twilio to prevent storage fees
+      const twilioClient = twilio(
+        process.env.TWILIO_API_KEY, 
+        process.env.TWILIO_API_SECRET, 
+        { accountSid: process.env.TWILIO_ACCOUNT_SID }
+      );
+      await twilioClient.recordings(recordingSid).remove();
     }
     
-    // Always return 200 so Twilio knows we received it successfully
     res.sendStatus(200);
   } catch (error) {
-    console.error('Error saving recording webhook:', error);
+    console.error('Error in Cloudinary migration webhook:', error);
     res.sendStatus(500);
   }
 });
