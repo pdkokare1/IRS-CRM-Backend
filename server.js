@@ -7,7 +7,8 @@ const app = express();
 
 // Middleware
 app.use(cors()); // Allows your Vercel frontend to make requests here
-app.use(express.json()); // Parses incoming JSON data
+// MODIFIED: Increased payload limit to 50mb to support bulk CSV uploads
+app.use(express.json({ limit: '50mb' })); // Parses incoming JSON data
 
 // Temporary Mock Auth Middleware (Until Firebase Admin is connected)
 // This ensures req.user.uid exists so our routes don't crash during early testing
@@ -22,7 +23,7 @@ app.use('/api/associate', associateRoutes);
 
 // Root route for health check
 app.get('/', (req, res) => {
-  res.send('The Gamut CRM Backend is running.');
+  res.send('IRS-CRM Backend is running.');
 });
 
 const PORT = process.env.PORT || 8080;
