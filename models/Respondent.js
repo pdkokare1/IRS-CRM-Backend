@@ -19,16 +19,19 @@ const respondentSchema = new mongoose.Schema({
     of: String,
     default: {},
   },
-  // NEW: Links the respondent to a specific agent's list view
   assignedTo: {
     type: String,
     default: null,
   },
-  // NEW: Provides instant UI feedback in the dashboard table
   lastCallStatus: {
     type: String,
     default: 'Uncalled',
   },
+  // NEW: Formally tracking Cloudinary audio URLs
+  recordings: [{
+    url: { type: String },
+    date: { type: Date, default: Date.now }
+  }],
   createdAt: {
     type: Date,
     default: Date.now,
