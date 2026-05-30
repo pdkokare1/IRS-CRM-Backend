@@ -27,11 +27,19 @@ const respondentSchema = new mongoose.Schema({
     type: String,
     default: 'Uncalled',
   },
-  // NEW: Formally tracking Cloudinary audio URLs
   recordings: [{
     url: { type: String },
     date: { type: Date, default: Date.now }
   }],
+  // NEW: Added for Smart Callback Routing
+  callbackTime: {
+    type: Date,
+    default: null,
+  },
+  callbackAssignedTo: {
+    type: String,
+    default: null,
+  },
   createdAt: {
     type: Date,
     default: Date.now,
