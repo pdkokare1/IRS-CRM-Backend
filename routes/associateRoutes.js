@@ -161,7 +161,7 @@ router.get('/seed', async (req, res) => {
       },
       {
         name: "David Chen",
-        phone: "+14155552671",
+        phone: "+919860030346",
         email: "david@example.com",
         demographics: { age: 45, gender: "Male", location: "San Francisco, USA", industry: "Healthcare" }
       }
