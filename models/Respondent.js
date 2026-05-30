@@ -10,10 +10,16 @@ const respondentSchema = new mongoose.Schema({
     required: true,
     unique: true,
   },
-  email: {
-    type: String,
-    default: null,
-  },
+  // NEW: Expanded Respondent Data Fields
+  company: { type: String, default: null },
+  jobTitle: { type: String, default: null },
+  jobRole: { type: String, default: null },
+  email: { type: String, default: null },
+  directNumber: { type: String, default: null },
+  boardLineNumber: { type: String, default: null },
+  source: { type: String, default: null },
+  country: { type: String, default: null },
+  
   demographics: {
     type: Map,
     of: String,
@@ -31,7 +37,6 @@ const respondentSchema = new mongoose.Schema({
     url: { type: String },
     date: { type: Date, default: Date.now }
   }],
-  // NEW: Added for Smart Callback Routing
   callbackTime: {
     type: Date,
     default: null,
