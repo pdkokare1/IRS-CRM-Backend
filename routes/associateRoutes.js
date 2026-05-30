@@ -1,3 +1,5 @@
+// File: routes/associateRoutes.js
+
 const express = require('express');
 const router = express.Router();
 const twilio = require('twilio');
@@ -19,14 +21,12 @@ router.get('/next-respondent', async (req, res) => {
     const associateId = req.user.uid; 
 
     // NEW FEATURE: Hard Quota Enforcement Check
-    // Example: Global cap of 5000 completed surveys before system auto-halts
     const completedCount = await Disposition.countDocuments({ outcome: { $regex: /^completed/ } });
     if (completedCount >= 5000) {
       return res.status(403).json({ message: 'Campaign Quota reached. No more leads can be pulled.' });
     }
 
     // NEW FEATURE: Smart Callback Routing
-    // Check for due callbacks assigned to this associate first
     let respondent = await Respondent.findOneAndUpdate(
       { 
         status: 'callback-requested', 
@@ -94,7 +94,7 @@ router.get('/twilio-token', (req, res) => {
 // 3. Save Disposition and Unlock/Update Respondent
 router.post('/disposition', async (req, res) => {
   try {
-    const { respondentId, outcome, notes, callDurationSeconds, callbackTime } = req.body;
+    const { respondentId, outcome, notes, callDurationSeconds, callbackTime, recordingUrl } = req.body;
     const associateId = req.user.uid;
 
     if (!respondentId || !outcome) {
@@ -107,18 +107,18 @@ router.post('/disposition', async (req, res) => {
       outcome,
       notes,
       callDurationSeconds,
-      callbackTime: outcome === 'callback-requested' ? callbackTime : null // NEW
+      callbackTime: outcome === 'callback-requested' ? callbackTime : null,
+      recordingUrl: recordingUrl || null
     });
     await disposition.save();
 
-    // Update respondent status, routing flags, and remove lock
     await Respondent.findByIdAndUpdate(respondentId, {
       status: outcome === 'no-answer' ? 'uncontacted' : outcome,
       lastCallStatus: outcome,
       lockedBy: null,
       lockTime: null,
-      callbackTime: outcome === 'callback-requested' ? callbackTime : null, // NEW
-      callbackAssignedTo: outcome === 'callback-requested' ? associateId : null // NEW
+      callbackTime: outcome === 'callback-requested' ? callbackTime : null,
+      callbackAssignedTo: outcome === 'callback-requested' ? associateId : null 
     });
 
     res.status(200).json({ message: 'Disposition saved successfully.' });
@@ -254,7 +254,7 @@ router.get('/metrics', async (req, res) => {
   }
 });
 
-// NEW FEATURE 8: Data Ingestion (CSV Upload to DB)
+// 8. Data Ingestion (CSV Upload to DB)
 router.post('/ingest', async (req, res) => {
   try {
     const records = req.body; // Expects an array of objects mapped from CSV
@@ -262,9 +262,7 @@ router.post('/ingest', async (req, res) => {
       return res.status(400).json({ error: 'Valid JSON array of records required.' });
     }
 
-    // Insert ignoring duplicates (phone is unique in schema)
     const result = await Respondent.insertMany(records, { ordered: false }).catch(err => {
-      // If error is code 11000 (duplicate key), we return the successful insertions
       return err.insertedDocs; 
     });
 
@@ -274,15 +272,13 @@ router.post('/ingest', async (req, res) => {
   }
 });
 
-// NEW FEATURE 9: Client Data Export
+// 9. Client Data Export
 router.get('/export', async (req, res) => {
   try {
     const respondents = await Respondent.find().lean();
     
-    // Construct CSV Header
     let csvStr = 'ID,Name,Phone,Email,Status,LastCallStatus,RecordingCount\n';
     
-    // Populate CSV Rows
     respondents.forEach(r => {
       const recCount = r.recordings ? r.recordings.length : 0;
       csvStr += `"${r._id}","${r.name}","${r.phone}","${r.email || ''}","${r.status || 'uncontacted'}","${r.lastCallStatus || ''}",${recCount}\n`;
@@ -291,6 +287,69 @@ router.get('/export', async (req, res) => {
     res.header('Content-Type', 'text/csv');
     res.attachment('irs_crm_export.csv');
     res.send(csvStr);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+// NEW FEATURE: Get Active Associates for Warm Transfer
+router.get('/active-associates', async (req, res) => {
+  try {
+    // Mock active users for the interface
+    const mockActiveAssociates = [
+      { id: 'manager-001', name: 'Sarah Connor', role: 'Escalations Manager', status: 'Available' },
+      { id: 'agent-002', name: 'John Smith', role: 'Senior Associate', status: 'In a Call' },
+      { id: 'agent-003', name: 'Priya Mehta', role: 'Support Specialist', status: 'Available' }
+    ];
+    res.json(mockActiveAssociates);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// NEW FEATURE: 1-Click Voicemail Drop Hijack (REST API approach)
+router.post('/voicemail-drop', express.json(), async (req, res) => {
+  try {
+    const { callSid } = req.body;
+    if (!callSid) return res.status(400).json({ error: 'Call SID required' });
+
+    const twilioClient = twilio(process.env.TWILIO_API_KEY, process.env.TWILIO_API_SECRET, { accountSid: process.env.TWILIO_ACCOUNT_SID });
+    const serverUrl = `https://${req.get('host')}`;
+    
+    // Updates the live call to abandon the associate and read the voicemail TwiML
+    await twilioClient.calls(callSid).update({
+      method: 'POST',
+      url: `${serverUrl}/api/associate/voicemail-twiml`
+    });
+
+    res.status(200).json({ message: 'Voicemail routing initiated successfully.' });
+  } catch (error) {
+    console.error('Voicemail Drop Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// NEW FEATURE: The TwiML for the Voicemail Drop
+router.post('/voicemail-twiml', express.urlencoded({ extended: false }), (req, res) => {
+  const twiml = new VoiceResponse();
+  // Ensure VOICEMAIL_AUDIO_URL is added to your Railway variables!
+  const audioUrl = process.env.VOICEMAIL_AUDIO_URL || 'https://demo.twilio.com/docs/classic.mp3';
+  
+  twiml.play(audioUrl);
+  twiml.hangup(); // Hang up after the message finishes playing
+  
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+// NEW FEATURE: Historical Timeline Fetcher
+router.get('/respondent/:id/history', async (req, res) => {
+  try {
+    const history = await Disposition.find({ respondentId: req.params.id })
+      .sort({ createdAt: -1 })
+      .lean();
+    res.json(history);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
