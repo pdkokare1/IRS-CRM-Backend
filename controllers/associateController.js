@@ -344,3 +344,34 @@ exports.trackSurvey = async (req, res) => {
     res.status(500).send('Tracking error occurred.');
   }
 };
+
+// NEW: Fetches global history for the associate over a specific date range
+exports.getGlobalHistory = async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    const associateId = req.user.uid;
+
+    if (!start || !end) {
+      return res.status(400).json({ error: 'Start and end dates are required.' });
+    }
+
+    // Standardize to beginning of start day and end of end day
+    const startDate = new Date(start);
+    startDate.setHours(0, 0, 0, 0);
+
+    const endDate = new Date(end);
+    endDate.setHours(23, 59, 59, 999);
+
+    const history = await Disposition.find({
+      associateId,
+      createdAt: { $gte: startDate, $lte: endDate }
+    })
+      .populate('respondentId', 'name phone') // Joins Respondent data to grab name and phone
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json(history);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
