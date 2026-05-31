@@ -1,3 +1,5 @@
+// File: server.js
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -7,7 +9,7 @@ const app = express();
 
 // Middleware
 app.use(cors()); // Allows your Vercel frontend to make requests here
-// MODIFIED: Increased payload limit to 50mb to support bulk CSV uploads
+// Increased payload limit to 50mb to support bulk CSV uploads
 app.use(express.json({ limit: '50mb' })); // Parses incoming JSON data
 
 // Temporary Mock Auth Middleware (Until Firebase Admin is connected)
@@ -19,7 +21,10 @@ app.use((req, res, next) => {
 
 // Mount Routes
 const associateRoutes = require('./routes/associateRoutes');
+const adminRoutes = require('./routes/adminRoutes'); // NEW: Admin routes imported
+
 app.use('/api/associate', associateRoutes);
+app.use('/api/admin', adminRoutes); // NEW: Admin routes mounted
 
 // Root route for health check
 app.get('/', (req, res) => {
