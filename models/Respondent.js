@@ -11,6 +11,7 @@ const respondentSchema = new mongoose.Schema({
     type: String,
     required: true,
     unique: true,
+    index: true, // Speeds up manual searches
   },
   // Expanded Respondent Data Fields
   company: { type: String, default: null },
@@ -20,7 +21,7 @@ const respondentSchema = new mongoose.Schema({
   directNumber: { type: String, default: null },
   boardLineNumber: { type: String, default: null },
   
-  // NEW: Schema accepts multiple extra board lines 
+  // Schema accepts multiple extra board lines 
   additionalBoardLines: [{ type: String }],
   
   source: { type: String, default: null },
@@ -35,9 +36,27 @@ const respondentSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  
+  // NEW/MISSING: Added to support the atomic locking in associateController
+  status: {
+    type: String,
+    default: 'uncontacted',
+    index: true,
+  },
+  lockedBy: {
+    type: String,
+    default: null,
+    index: true,
+  },
+  lockTime: {
+    type: Date,
+    default: null,
+  },
+  
   lastCallStatus: {
     type: String,
     default: 'Uncalled',
+    index: true,
   },
   recordings: [{
     url: { type: String },
@@ -46,16 +65,18 @@ const respondentSchema = new mongoose.Schema({
   callbackTime: {
     type: Date,
     default: null,
+    index: true,
   },
   callbackAssignedTo: {
     type: String,
     default: null,
+    index: true,
   },
   createdAt: {
     type: Date,
     default: Date.now,
   },
-  // NEW FEATURE: Smart Email & Survey Tracking System
+  // Smart Email & Survey Tracking System
   assignedSurveys: [{
     surveyName: { type: String },
     associateId: { type: String },
@@ -64,5 +85,8 @@ const respondentSchema = new mongoose.Schema({
     sentAt: { type: Date, default: Date.now }
   }]
 });
+
+// Compound index for the atomic queue fetch (prioritizing callbacks and uncontacted leads)
+respondentSchema.index({ status: 1, lockedBy: 1, callbackTime: 1 });
 
 module.exports = mongoose.models.Respondent || mongoose.model('Respondent', respondentSchema);
