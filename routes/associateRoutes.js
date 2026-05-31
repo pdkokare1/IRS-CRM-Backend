@@ -34,7 +34,7 @@ router.post('/voicemail-drop', express.json(), associateController.voicemailDrop
 // 9. The TwiML for the Voicemail Drop
 router.post('/voicemail-twiml', express.urlencoded({ extended: false }), associateController.voicemailTwiml);
 
-// 10. Historical Timeline Fetcher
+// 10. Historical Timeline Fetcher (Specific Respondent)
 router.get('/respondent/:id/history', associateController.getHistory);
 
 // 11. Send Introductory Email via Resend
@@ -42,5 +42,8 @@ router.post('/send-intro-email', associateController.sendIntroEmail);
 
 // 12. Survey Tracking Redirect
 router.get('/track-survey/:token', associateController.trackSurvey);
+
+// 13. Global History for Associate Dashboard
+router.get('/history', associateController.getGlobalHistory);
 
 module.exports = router;
